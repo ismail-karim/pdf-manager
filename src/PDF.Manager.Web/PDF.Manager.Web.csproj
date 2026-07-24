@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>PDF.Manager.Web</RootNamespace>
+    <AssemblyName>PDF.Manager.Web</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PDF.Manager.Application\PDF.Manager.Application.csproj" />
+    <ProjectReference Include="..\PDF.Manager.Infrastructure\PDF.Manager.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

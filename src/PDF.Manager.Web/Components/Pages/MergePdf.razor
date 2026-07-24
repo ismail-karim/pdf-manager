@@ -1,0 +1,262 @@
+@page "/"
+@rendermode InteractiveServer
+
+@using PDF.Manager.Application.Abstractions
+@using PDF.Manager.Application.Dtos
+@using PDF.Manager.Domain.Exceptions
+
+@inject IMergePdfDocumentsUseCase MergePdfDocumentsUseCase
+@inject IJSRuntime JsRuntime
+
+<PageTitle>PDF.Manager - Fusion de PDF</PageTitle>
+
+<section class="merge">
+    <h1 class="merge__title">Fusionner des fichiers PDF</h1>
+    <p class="merge__subtitle">
+        Ajoutez vos fichiers PDF, ordonnez-les à l'aide des flèches, puis générez un document unique et compressé.
+    </p>
+
+    <div class="merge__upload">
+        <label class="merge__upload-label">
+            <InputFile OnChange="HandleFilesSelectedAsync" multiple accept="application/pdf" />
+        </label>
+        <span class="merge__upload-hint">
+            @MaxNumberOfFiles fichiers maximum, @FormatSize(MaxFileSizeInBytes) par fichier.
+        </span>
+    </div>
+
+    @if (_errorMessage is not null)
+    {
+        <div class="merge__message merge__message--error" role="alert">@_errorMessage</div>
+    }
+
+    @if (_selectedFiles.Count == 0)
+    {
+        <p class="merge__empty">Aucun fichier sélectionné pour le moment.</p>
+    }
+    else
+    {
+        <ol class="file-list">
+            @for (int index = 0; index < _selectedFiles.Count; index++)
+            {
+                int currentIndex = index;
+                SelectedPdfFile file = _selectedFiles[currentIndex];
+
+                <li class="file-list__item">
+                    <span class="file-list__position">@(currentIndex + 1)</span>
+                    <span class="file-list__name" title="@file.FileName">@file.FileName</span>
+                    <span class="file-list__size">@FormatSize(file.Size)</span>
+                    <span class="file-list__actions">
+                        <button type="button" class="btn btn--icon"
+                                title="Monter"
+                                disabled="@(currentIndex == 0 || _isProcessing)"
+                                @onclick="() => MoveUp(currentIndex)">▲</button>
+                        <button type="button" class="btn btn--icon"
+                                title="Descendre"
+                                disabled="@(currentIndex == _selectedFiles.Count - 1 || _isProcessing)"
+                                @onclick="() => MoveDown(currentIndex)">▼</button>
+                        <button type="button" class="btn btn--icon btn--danger"
+                                title="Supprimer"
+                                disabled="@_isProcessing"
+                                @onclick="() => RemoveFile(currentIndex)">✕</button>
+                    </span>
+                </li>
+            }
+        </ol>
+    }
+
+    <div class="merge__actions">
+        <button type="button" class="btn btn--primary"
+                disabled="@(!CanMerge)"
+                @onclick="MergeAsync">
+            @if (_isProcessing)
+            {
+                <span>Fusion en cours…</span>
+            }
+            else
+            {
+                <span>Fusionner et télécharger</span>
+            }
+        </button>
+        <button type="button" class="btn btn--secondary"
+                disabled="@(_selectedFiles.Count == 0 || _isProcessing)"
+                @onclick="ClearFiles">
+            Tout retirer
+        </button>
+    </div>
+</section>
+
+@code {
+    /// <summary>The maximum size, in bytes, accepted for a single uploaded PDF file (50 MB).</summary>
+    private const long MaxFileSizeInBytes = 50L * 1024 * 1024;
+
+    /// <summary>The maximum number of PDF files that can be merged in a single operation.</summary>
+    private const int MaxNumberOfFiles = 50;
+
+    private readonly List<SelectedPdfFile> _selectedFiles = new();
+    private string? _errorMessage;
+    private bool _isProcessing;
+
+    /// <summary>Gets a value indicating whether the merge operation can currently be started.</summary>
+    private bool CanMerge => _selectedFiles.Count >= 2 && !_isProcessing;
+
+    /// <summary>
+    /// Reads the files selected by the user, validates them and appends them to the current list.
+    /// </summary>
+    /// <param name="eventArgs">The event carrying the newly selected files.</param>
+    private async Task HandleFilesSelectedAsync(InputFileChangeEventArgs eventArgs)
+    {
+        _errorMessage = null;
+
+        foreach (IBrowserFile browserFile in eventArgs.GetMultipleFiles(MaxNumberOfFiles))
+        {
+            if (_selectedFiles.Count >= MaxNumberOfFiles)
+            {
+                _errorMessage = $"Vous ne pouvez pas dépasser {MaxNumberOfFiles} fichiers.";
+                break;
+            }
+
+            if (!browserFile.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+            {
+                _errorMessage = $"Le fichier « {browserFile.Name} » n'est pas un PDF et a été ignoré.";
+                continue;
+            }
+
+            if (browserFile.Size > MaxFileSizeInBytes)
+            {
+                _errorMessage = $"Le fichier « {browserFile.Name} » dépasse la taille maximale autorisée.";
+                continue;
+            }
+
+            byte[] content = await ReadFileContentAsync(browserFile);
+            _selectedFiles.Add(new SelectedPdfFile(browserFile.Name, browserFile.Size, content));
+        }
+    }
+
+    /// <summary>
+    /// Reads the whole content of a browser file into a byte array.
+    /// </summary>
+    /// <param name="browserFile">The file to read.</param>
+    /// <returns>The binary content of the file.</returns>
+    private static async Task<byte[]> ReadFileContentAsync(IBrowserFile browserFile)
+    {
+        await using Stream readStream = browserFile.OpenReadStream(MaxFileSizeInBytes);
+        using var memoryStream = new MemoryStream();
+        await readStream.CopyToAsync(memoryStream);
+        return memoryStream.ToArray();
+    }
+
+    /// <summary>Moves the file at the given index one position up in the list.</summary>
+    /// <param name="index">The index of the file to move.</param>
+    private void MoveUp(int index)
+    {
+        if (index <= 0)
+        {
+            return;
+        }
+
+        (_selectedFiles[index - 1], _selectedFiles[index]) = (_selectedFiles[index], _selectedFiles[index - 1]);
+    }
+
+    /// <summary>Moves the file at the given index one position down in the list.</summary>
+    /// <param name="index">The index of the file to move.</param>
+    private void MoveDown(int index)
+    {
+        if (index >= _selectedFiles.Count - 1)
+        {
+            return;
+        }
+
+        (_selectedFiles[index + 1], _selectedFiles[index]) = (_selectedFiles[index], _selectedFiles[index + 1]);
+    }
+
+    /// <summary>Removes the file at the given index from the list.</summary>
+    /// <param name="index">The index of the file to remove.</param>
+    private void RemoveFile(int index)
+    {
+        _selectedFiles.RemoveAt(index);
+    }
+
+    /// <summary>Removes every selected file and clears any error message.</summary>
+    private void ClearFiles()
+    {
+        _selectedFiles.Clear();
+        _errorMessage = null;
+    }
+
+    /// <summary>
+    /// Executes the merge use case with the currently selected files and triggers the download of the result.
+    /// </summary>
+    private async Task MergeAsync()
+    {
+        _errorMessage = null;
+
+        if (_selectedFiles.Count < 2)
+        {
+            _errorMessage = "Ajoutez au moins deux fichiers PDF pour lancer une fusion.";
+            return;
+        }
+
+        _isProcessing = true;
+        try
+        {
+            var request = new MergePdfDocumentsRequest
+            {
+                Files = _selectedFiles
+                    .Select(file => new PdfFileToMerge(file.FileName, file.Content))
+                    .ToList(),
+            };
+
+            MergePdfDocumentsResult result = await MergePdfDocumentsUseCase.ExecuteAsync(request);
+            await DownloadFileAsync(result.FileName, result.Content);
+        }
+        catch (PdfManagerDomainException exception)
+        {
+            _errorMessage = exception.Message;
+        }
+        catch (Exception)
+        {
+            _errorMessage = "Une erreur inattendue est survenue lors de la fusion des fichiers.";
+        }
+        finally
+        {
+            _isProcessing = false;
+        }
+    }
+
+    /// <summary>
+    /// Sends the merged document to the browser as a file download using a JavaScript interop helper.
+    /// </summary>
+    /// <param name="fileName">The suggested file name for the download.</param>
+    /// <param name="content">The binary content of the merged document.</param>
+    private async Task DownloadFileAsync(string fileName, byte[] content)
+    {
+        using var stream = new MemoryStream(content);
+        using var streamReference = new DotNetStreamReference(stream);
+        await JsRuntime.InvokeVoidAsync("pdfManager.downloadFileFromStream", fileName, streamReference);
+    }
+
+    /// <summary>Formats a size in bytes into a human readable string.</summary>
+    /// <param name="sizeInBytes">The size to format, in bytes.</param>
+    /// <returns>A human readable representation of the size.</returns>
+    private static string FormatSize(long sizeInBytes)
+    {
+        string[] units = { "octets", "Ko", "Mo", "Go" };
+        double size = sizeInBytes;
+        int unitIndex = 0;
+
+        while (size >= 1024 && unitIndex < units.Length - 1)
+        {
+            size /= 1024;
+            unitIndex++;
+        }
+
+        return $"{size:0.#} {units[unitIndex]}";
+    }
+
+    /// <summary>Represents a PDF file selected by the user, held in memory before the merge.</summary>
+    /// <param name="FileName">The original file name.</param>
+    /// <param name="Size">The file size in bytes.</param>
+    /// <param name="Content">The raw binary content of the file.</param>
+    private sealed record SelectedPdfFile(string FileName, long Size, byte[] Content);
+}
