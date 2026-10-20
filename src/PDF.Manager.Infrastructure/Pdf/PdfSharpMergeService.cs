@@ -78,6 +78,6 @@ public sealed class PdfSharpMergeService : IPdfMergeService
     {
         options.NoCompression = false;
         options.CompressContentStreams = true;
-        options.FlateEncodeMode = FlateEncodeMode.BestCompression;
+        options.FlateEncodeMode = PdfFlateEncodeMode.BestCompression;
     }
 }
